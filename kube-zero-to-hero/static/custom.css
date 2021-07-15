@@ -1,0 +1,16 @@
+.reveal small {
+    display: inline-block;
+    font-size: 0.6em;
+    line-height: 1.2em;
+    vertical-align: top;
+}
+
+.reveal .spacer {
+    margin: 2em 0 2em 0;
+}
+
+.reveal .bottom {
+    bottom: 0;
+    text-align: right;
+    float: right;
+}

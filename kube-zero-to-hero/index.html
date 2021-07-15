@@ -1,0 +1,609 @@
+<!doctype html>
+<html>
+
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <meta name="description" content="Kubernetes: From zero to hero">
+    <meta name="author" content="Danil Beltyukov">
+
+    <meta name="apple-mobile-web-app-capable" content="yes">
+    <meta name="apple-mobile-web-app-status-bar-style" content="white-translucent">
+
+    <title>Kubernetes: From zero to hero</title>
+
+    <link rel="stylesheet" href="reveal.js/dist/reset.css">
+    <link rel="stylesheet" href="reveal.js/dist/reveal.css">
+    <!-- <link rel="stylesheet" href="reveal.js/dist/theme/sky.css" id="theme"> -->
+    <link rel="stylesheet" href="static/theme.css" id="theme">
+
+    <link rel="stylesheet" href="reveal.js/plugin/highlight/monokai.css" id="highlight-theme">
+    <link rel="stylesheet" href="./static/custom.css">
+</head>
+
+<body>
+    <div class="reveal">
+        <div class="slides">
+            <section data-background-image="static/moomin_on_cloud.gif">
+                <div style="position:absolute; top: 400px;">
+                    <h3 >Kubernetes: From zero to hero</h3>
+                    <p>v2</p>
+                </div>
+            </section>
+            <!-- <section data-markdown="slides.md" data-separator="^\r?\n\r?\n\r?\n" data-separator-vertical="^\r?\n\r?\n"
+                data-separator-notes="^Note:" data-charset="iso-8859-15">
+            </section> -->
+            <section>
+                <h3>Outline</h3>
+                <ul>
+                    <li>Intro: containers</li>
+                    <li>Why tho?</li>
+                    <li>Kubernetes resourses</li>
+                    <li>Kubernetes architecture</li>
+                    <li>Role Based Access Control</li>
+                    <li>Network Policy</li>
+                    <li>Revisiting Docker</li>
+                    <li>PodSecurity Policy</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Intro: containers</h3>
+                <img src="./static/containers-101.png" alt="Containers vs VMs">
+                <p class="bottom"><a href="https://cloud.google.com/containers">https://cloud.google.com/containers</a>
+                </p>
+            </section>
+            <section>
+                <h3>Chroot jail</h3>
+                <pre><code data-trim data-noescape>
+copy /bin/bash /jail/bash
+mount -o bind /home /jail/home
+                </code></pre>
+                <aside class="notes">
+                    Example: used in vsftpd
+                </aside>
+            </section>
+            <section>
+                <h3>Namespaces</h3>
+                <pre><code class="shell" data-trim>
+$ unshare --fork --pid --mount-proc bash
+$ ps auxf
+USER PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root   1  0.0  0.0   8964  3924 pts/4    S    00:25   0:00 bash
+root   8  0.0  0.0  10612  3304 pts/4    R+   00:25   0:00 ps auxf
+                </code></pre>
+                <p>🤔</p>
+            </section>
+            <section>
+                <h3>Namespaces</h3>
+                <ul>
+                    <li>Cgroup</li>
+                    <li>IPC</li>
+                    <li><b>Network</b></li>
+                    <li><b>Mount</b></li>
+                    <li><b>PID</b></li>
+                    <li><b>User</b></li>
+                    <li>UTS</li>
+                </ul>
+                <p class="bottom"><a
+                        href="http://ifeanyi.co/posts/linux-namespaces-part-1/">http://ifeanyi.co/posts/linux-namespaces-part-1/</a>
+                </p>
+            </section>
+            <section>
+                <img src="./static/linux-containers.png" alt="Linux containers" style="height: 65vh;">
+            </section>
+            <section>
+                <h3>Docker 🐋</h3>
+                <pre><code class="shell" data-trim>
+$ docker run -ti --rm ubuntu bash
+root@03f784316baa:/# ps auxf
+USER PID %CPU %MEM    VSZ   RSS TTY      STAT START   TIME COMMAND
+root   1  0.2  0.0   4112  3436 pts/0    Ss   21:40   0:00 bash
+root   8  0.0  0.0   5884  2948 pts/0    R+   21:40   0:00 ps auxf
+                </code></pre>
+                😎
+            </section>
+            <section>
+                <h3>❗</h3>
+                <p>Any Docker container is just a process</p>
+            </section>
+            <section>
+                <h3>Dockerfile</h3>
+                <pre><code class="docker" data-trim>
+FROM ubuntu
+RUN apt update && apt install nginx
+CMD ["nginx", "-g", "daemon off;"]
+                </code></pre>
+                <pre><code class="shell" data-trim>
+$ docker build -t my-nginx .
+$ docker run -p 80:80 my-nginx
+                </code></pre>
+            </section>
+            <section>
+                <h3>How does it work?</h3>
+                <img src="./static/tnt.png" alt="Minecraft TNT block" class="fragment">
+            </section>
+            <section>
+                <pre><code class="shell" data-trim>
+$ ps axf -o user,pid,command
+root     19616 /usr/bin/containerd
+root     21721  \_ containerd-shim -namespace moby -workdir /var/lib/containerd/io.containerd.runtime.v1.linux/moby/35a2b88eb0659e452be831115395352359e35669efa766931d350296aa154c6d -address /run/containerd/containerd.sock -containerd-binary /usr/bin/containerd -runtime-root /var/run/docker/runtime-runc
+root     21745      \_ nginx: master process nginx -g daemon off;
+nobody   21788          \_ nginx: worker process
+nobody   21789          \_ nginx: worker process
+root     23571 /usr/bin/dockerd -H fd:// --containerd=/run/containerd/containerd.sock
+                </code></pre>
+            </section>
+            <section>
+                <img src="./static/containerd.png" alt="Containerd scheme">
+                <aside class="notes">
+                    <p>docker-cli -> docker.sock -> containerd.sock -> linux magic🌠</p>
+                </aside>
+            </section>
+            <section>
+                <img src="./static/containerd_docker.png" alt="Containerd scheme for Docker">
+            </section>
+            <section>
+                <h3>Links</h3>
+                <ul>
+                    <li><a
+                            href="https://iximiuz.com/en/posts/journey-from-containerization-to-orchestration-and-beyond/">A
+                            journey from containerization to orchestration and beyond</a></li>
+                    <li><a href="https://iximiuz.com/en/posts/you-dont-need-an-image-to-run-a-container/">You don't need
+                            an image to run a container</a></li>
+                    <li><a href="https://iximiuz.com/en/posts/implementing-container-runtime-shim/">Implementing
+                            Container Runtime Shim: runc</a></li>
+                    <li><a href="https://iximiuz.com/en/posts/implementing-container-runtime-shim-2/">Implementing
+                            Container Runtime Shim: First Code</a></li>
+                    <li><a href="https://iximiuz.com/en/posts/implementing-container-runtime-shim-3/">Implementing
+                            Container Runtime Shim: Interactive Containers</a></li>
+                    <li><a href="https://merlijn.sebrechts.be/blog/2020-01-docker-podman-kata-cri-o/">What's up with
+                            CRI-O, Kata Containers and Podman?</a></li>
+                    <li><a
+                            href="https://www.cncf.io/blog/2019/07/15/demystifying-containers-part-ii-container-runtimes/">Demystifying
+                            Containers – Part II: Container Runtimes</a></li>
+                </ul>
+            </section>
+            <section>
+                <h3>But how is it secure?🤔</h3>
+            </section>
+            <section>
+                <ul>
+                    <li><a href="https://chromium.googlesource.com/chromium/src.git/+/master/docs/linux/sandboxing.md">Chromium
+                            already used all these Linux feautures!</a></li>
+                    <li class="fragment">Seccomp - block unwanted syscalls</li>
+                    <li class="fragment">Apparmor - restrict Linux <a
+                            href="https://man7.org/linux/man-pages/man7/capabilities.7.html">capabilities</a></li>
+                    <li class="fragment">SELinux - access control for files (== everything)</li>
+                </ul>
+                <aside class="notes">
+                    <p>setuid -> capabilities</p>
+                    <p>Example: ping +x -> cap_net_raw</p>
+                </aside>
+            </section>
+            <section>
+                <h3>More layers == more attack surface</h3>
+                <ul>
+                    <li class="fragment">Kernel exploit</li>
+                    <li class="fragment"><a
+                            href="https://unit42.paloaltonetworks.com/breaking-docker-via-runc-explaining-cve-2019-5736/">arbitary
+                            binary runC overwrite</a></li>
+                    <li class="fragment"><a
+                            href="https://unit42.paloaltonetworks.com/docker-patched-the-most-severe-copy-vulnerability-to-date-with-cve-2019-14271/">docker
+                            cp RCE + escape</a></li>
+                    <li class="fragment">Mounted <code>/var/run/docker.sock</code></li>
+                    <li class="fragment"><code>dockerd</code> pwn, it runs as root!</li>
+                    <li class="fragment">
+                        Disabling security mechanisms
+                        <ul>
+                            <li class="fragment"><code>--privileged</code></li>
+                            <li class="fragment"><code>--cap-add=SYS_ADMIN</code></li>
+                            <li class="fragment"><code>--security-opt seccomp=unconfined</code></li>
+                        </ul>
+                    </li>
+                </ul>
+            </section>
+            <section>
+                <h3>Recap</h3>
+                <ul>
+                    <li class="fragment">Containers are cool</li>
+                    <li class="fragment">Containers are versatile</li>
+                    <li class="fragment">Containers can be secure</li>
+                    <li class="fragment">Containers can be insecure</li>
+                </ul>
+            </section>
+            <section>
+                <img src="./static/panacea.png" alt="Docker panacea" style="height: 55vh;">
+            </section>
+            <section>
+                <p class="fragment">You need to run and scale 1000 containers</p>
+                <p class="fragment">They all should be talking to each other via network</p>
+                <p class="fragment">They should use network storage to run database on it</p>
+                <p class="fragment">They have a load balancer</p>
+                <p class="fragment">They should dynamically adjust nodes base on load</p>
+            </section>
+            <section>
+                <h3>Kubernetes!☸</h3>
+                <blockquote class="fragment">
+                    <p>Kubernetes (K8s) is an open-source system for automating deployment, scaling, and management of
+                        containerized applications.</p>
+                </blockquote>
+            </section>
+            <section>
+                <img src="./static/container_evolution.svg" alt="Container evolution">
+            </section>
+            <section>
+                <img src="./static/cluster.svg" alt="Kubernetes Cluster" style="height: 70vh;">
+            </section>
+            <section>
+                <img src="./static/pods.svg" alt="Kubernetes Pod" style="height: 70vh;">
+            </section>
+            <section>
+                <img src="./static/node.svg" alt="Kubernetes Node" style="height: 70vh;">
+            </section>
+            <section>
+                <pre><code class="shell" data-trim data-noescape>
+$ kubectl get nodes -o wide
+NAME     STATUS   ROLES    AGE   VERSION   INTERNAL-IP   EXTERNAL-IP   OS-IMAGE             KERNEL-VERSION    CONTAINER-RUNTIME
+kube-a   Ready    master   13d   v1.18.6   10.166.0.8    &lt;none&gt;        Ubuntu 16.04.7 LTS   4.15.0-1080-gcp   docker://18.9.7
+kube-b   Ready    &lt;none&gt;   13d   v1.18.6   10.166.0.7    &lt;none&gt;        Ubuntu 16.04.7 LTS   4.15.0-1080-gcp   docker://18.9.7
+                </code></pre>
+            </section>
+            <section>
+                <h3>Pods</h3>
+                <pre class="fragment"><code class="yaml" data-trim>
+apiVersion: v1
+kind: Pod
+metadata:
+    name: nginx
+    namespace: default
+spec:
+    containers:
+    - name: nginx
+      image: nginx
+</code></pre>
+                <pre class="fragment"><code class="shell" data-trim data-noescape>
+$ kubectl apply -f nginx.yaml
+pod/nginx created
+</code></pre>
+            </section>
+            <section>
+                <img src="./static/components-of-kubernetes.png" alt="Components of Kubernetes">
+                <p class="bottom"><a
+                        href="https://kubernetes.io/docs/concepts/overview/components/">https://kubernetes.io/docs/concepts/overview/components/</a>
+                </p>
+            </section>
+            <section>
+                <h3>Kubernetes versions</h3>
+                <ul>
+                    <li>Bare metal: bootstraped by <code>kubeadm</code></li>
+                    <li>Cloud managed: GKE, EKS, ...</li>
+                    <li>OpenShift</li>
+                    <li>...</li>
+                </ul>
+            </section>
+            <section>
+                <h3>Rule of thumb</h3>
+                <h3>No workloads or access on control-plane!</h3>
+                <div class="fragment">
+                    <p>Example:</p>
+                    <p>etcd on kubeadm < 1.16 accepts TLS certificates issued by apiserver CA (certs used for auth)</p>
+                            <p>Exploitation: create a pod with <code>hostNetwork: true</code></p>
+                </div>
+            </section>
+            <section>
+                <h3>Every resource has a namespace it belongs to</h3>
+                <pre><code class="yaml" data-trim data-line-numbers="5">
+apiVersion: v1
+kind: Pod
+metadata:
+    name: nginx
+    namespace: default
+spec:
+    containers:
+    - name: nginx
+        image: nginx
+                </code></pre>
+                <p>Namespaces only effects resourses in RBAC!</p>
+                <p>e.g. namespaces do not provide network isolation</p>
+            </section>
+            <section>
+                <h3>ServiceAccount</h3>
+                <pre><code class="yaml" data-trim>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    name: remover
+                </code></pre>
+                <p>Allowes workloads using Kubernetes API</p>
+            </section>
+            <section>
+                <h3>ServiceAccount token in pods</h3>
+                <pre><code class="shell" data-trim>
+root@nginx:/# ls /var/run/secrets/kubernetes.io/serviceaccount/
+ca.crt  namespace  token
+root@nginx:/var/run/secrets/kubernetes.io/serviceaccount# cat token
+eyJhbGc...UNg
+                </code></pre>
+                <pre class="fragment"><code class="yaml" data-trim>
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+    name: remover
+automountServiceAccountToken: false
+...
+                </code></pre>
+            </section>
+            <section>
+                <h4>Role Based Access Control (RBAC)</h3>
+                    <p><code>ServiceAccount <---> RoleBinding <---> Role</code></p>
+                    <pre><code class="yaml" data-trim data-line-numbers="1-8|10-20">
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+    name: remover
+rules:
+    - apiGroups: [""]
+      resources: ["pods"]
+      verbs: ["list", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+    name: remover
+subjects:
+- kind: ServiceAccount
+  name: remover
+roleRef:
+    kind: Role
+    name: remover
+    apiGroup: rbac.authorization.k8s.io
+                </code></pre>
+            </section>
+            <section>
+                <h3>Sum up</h3>
+                <ol>
+                    <li>Find a token for ServiceAccount</li>
+                    <li>
+                        Enumerate permissions
+                    </li>
+                    <pre><code data-trim class="shell">
+$ kubectl auth can-i --list
+Resources   Non-Resource URLs   Resource Names   Verbs
+*.*         []                  []               [*]
+            [*]                 []               [*]
+            [/api/*]            []               [get]
+            [/api]              []               [get]
+            [/apis/*]           []               [get]
+            [/apis]             []               [get]
+                </code></pre>
+                    <li>Try to escalate! Repeat...</li>
+                </ol>
+            </section>
+            <section>
+                <img src="./static/redhat2021-report.png" alt="Redhat 2021 Report Screenshot" >
+                <p class="bottom">
+                    Redhat 2021 Kubernetes security report
+                </p>
+            </section>
+            <section>
+                <h3>Revisiting Docker</h3>
+                <ul>
+                    <li class="fragment"><code>hostPath</code> - mounts directory from node</li>
+                    <li class="fragment"><code>privileged</code></li>
+                    <li class="fragment"><code>HostNetwork</code></li>
+                    <li class="fragment"><code>allowPrivilegeEscalation</code></li>
+                </ul>
+                <p class="fragment">Hvatit eto terpet'!</p>
+            </section>
+            <section>
+                <h3>PodSecurityPolicies</h3>
+                <p>Enables us to set restrictive policy on security context</p>
+            </section>
+            <section>
+                <pre><code class="yaml" data-trim data-line-numbers="1-5|6-9|11-13|14-15|16-18|19-26|27-33|34-35">
+apiVersion: policy/v1beta1
+kind: PodSecurityPolicy
+metadata:
+  name: restrictive
+  annotations:
+    seccomp.security.alpha.kubernetes.io/allowedProfileNames: 'docker/default,runtime/default'
+    apparmor.security.beta.kubernetes.io/allowedProfileNames: 'runtime/default'
+    seccomp.security.alpha.kubernetes.io/defaultProfileName:  'runtime/default'
+    apparmor.security.beta.kubernetes.io/defaultProfileName:  'runtime/default'
+spec:
+  privileged: false
+  allowPrivilegeEscalation: false
+  defaultAllowPrivilegeEscalation: false
+  requiredDropCapabilities:
+  - ALL
+  hostNetwork: false
+  hostPID: false
+  hostIPC: false
+  runAsUser:
+    rule: RunAsAny
+  fsGroup:
+    rule: RunAsAny
+  seLinux:
+    rule: RunAsAny
+  supplementalGroups:
+    rule: RunAsAny
+  volumes:
+  - 'configMap'
+  - 'downwardAPI'
+  - 'emptyDir'
+  - 'persistentVolumeClaim'
+  - 'secret'
+  - 'projected'
+  allowedCapabilities:
+  - 'NET_RAW'
+                </code></pre>
+            </section>
+            <section>
+                <pre><code class="yaml" data-trim data-line-numbers="1-10|12-22">
+kind: ClusterRole
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: restrictive-psp
+rules:
+- apiGroups: ['policy']
+  resources: ['podsecuritypolicies']
+  verbs:     ['use']
+  resourceNames:
+  - "restrictive"
+---
+kind: ClusterRoleBinding
+apiVersion: rbac.authorization.k8s.io/v1
+metadata:
+  name: restrictive-psp
+subjects:
+- kind: ServiceAccount
+  name: remover
+roleRef:
+    kind: Role
+    name: restrictive-psp
+    apiGroup: rbac.authorization.k8s.io 
+                </code></pre>
+            </section>
+            <section>
+                <h3>Network Policies</h3>
+                <pre><code class="yaml" data-trim data-line-numbers="1-10|11-31">
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: default-deny-egress
+    namespace: app
+spec:
+    podSelector:
+    matchLabels: {}
+    policyTypes:
+    - Egress
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+    name: allow-dns-access
+    namespace: app
+spec:
+    podSelector:
+    matchLabels: {}
+    policyTypes:
+    - Egress
+    egress:
+    - to:
+      - namespaceSelector:
+          matchLabels:
+              name: kube-system
+    ports:
+    - protocol: UDP
+      port: 53
+    - protocol: TCP
+      port: 53
+                </code></pre>
+            </section>
+            <section>
+                <img src="./static/network-policy-editor.png" alt="Cilium Network Policy editor">
+                <p class="bottom">
+                    <a href="https://editor.cilium.io">editor.cilium.io</a>
+                </p>
+            </section>
+            <section>
+                <p>Network plugin support required.</p>
+                <p>You won't get a warning if it's not working!</p>
+            </section>
+            <section>
+                <h1>Cloud things</h1>
+                <pre><code class="shell" data-line-numbers="1-2|3-4|5-6" data-trim>
+$ curl "http://metadata.google.internal/computeMetadata/v1beta1/instance/service-accounts/default/token"
+{"access_token":"ya29.c.Ko...QtkM","expires_in":2837,"token_type":"Bearer"}
+$ curl "https://cloudresourcemanager.googleapis.com/v1/projects?alt=json" -H "Authorization: Bearer ya29..."
+...
+$ curl -H "Authorization: Bearer ya29..." "http://kube-apiserver:6443/api/v1"
+{...}
+                </code></pre>
+            </section>
+            <section>
+                <h3>CoreDNS</h3>
+                <p><pre><code>*name*.*namespace*.svc.cluster.local</code></pre></p>
+            </section>
+            <section>
+                <h3>Kubernetes dashboard</h3>
+                <img src="./static/dashboard-ui.png" alt="Kubernetes dashboard UI">
+            </section>
+            <section>
+                <h3>Combine together</h3>
+                <pre><code>curl http://kubernetes-dashboard.kubernetes-dashboard.svc.cluster.local:443/api/v1/ -k</code></pre>
+            </section>
+            <section>
+                <img src="./static/whoops-new-cve.png" alt="New Kubernetes CVE" >
+            </section>
+            <section>
+                <img src="./static/Matrix.png" alt="Kubernetes attack matrix">
+            </section>
+            <section>
+                <h3>Cool links</h3>
+                <ul>
+                    <li><a href="https://kccnceu20.sched.com/event/ZesN">Advanced Persistence Threats by Ian Coldwater &
+                            Brad Geesaman</a> <a href="https://github.com/bgeesaman/kubecon-eu-2020-demo-files">GH</a>
+                    </li>
+                    <li><a href="https://kccnceu20.sched.com/event/Zerb">Next Generation Process Isolation - Andrew
+                            Martin</a></li>
+                    <li><a href="https://github.com/mauilion/blackhat-2019">The path less traveled: Abusing Kubernetes
+                            Defaults - Duffie Cooley and Ian Coldwater</a></li>
+                    <li><a href="https://t.me/k8security">k8s (in)security</a></li>
+                    <li><a
+                            href="https://rhinosecuritylabs.com/cloud-security/kubelet-tls-bootstrap-privilege-escalation/">GKE
+                            Kubelet TLS Bootstrap Privilege Escalation</a></li>
+                    <li><a
+                            href="https://docs.google.com/presentation/d/1XgopLXWjMdJojVFh_fPDJ2RllNpT9_y72vJSJ7oz57w/edit?usp=sharing">Kubernetes
+                            Security Low-Hanging Fruit - CCAU 2019
+                        </a></li>
+                    <li><a href="https://securekubernetes.com/">KubeCon NA 2019 CTF</a></li>
+                </ul>
+            </section>
+            <section>
+                <h3>Not today</h3>
+                <ul>
+                    <li class="fragment">Networking (CNI)</li>
+                    <li class="fragment">Supply chain attacks</li>
+                    <li class="fragment">
+                        Custom container runtimes (CRI)
+                        <ul>
+                            <li>cri-o</li>
+                            <li>firecracker</li>
+                            <li>gvisor</li>
+                        </ul>
+                    </li>
+                    <li class="fragment">Open Policy Agent</li>
+                    <li class="fragment">
+                        Service mesh
+                        <ul>
+                            <li>Istio</li>
+                            <li>Linkerd</li>
+                        </ul>
+                    </li>
+                </ul>
+            </section>
+            <section data-background-image="./static/landscape.png" data-background-size="contain"
+                data-background-repeat="no-repeat">
+                <p class="bottom" style="background: rgba(255, 0, 0, 0.5); margin-top: 70vh;"><kbd>Alt</kbd> + <kdb>
+                        click</kdb> to zoom </p>
+            </section>
+        </div>
+    </div>
+
+    <script src="reveal.js/dist/reveal.js"></script>
+    <script src="reveal.js/plugin/notes/notes.js"></script>
+    <script src="reveal.js/plugin/zoom/zoom.js"></script>
+    <script src="reveal.js/plugin/highlight/highlight.js"></script>
+    <script>
+        Reveal.initialize({
+            hash: true,
+            plugins: [RevealHighlight, RevealNotes, RevealZoom],
+            slideNumber: true,
+            backgroundTransition: 'none'
+        });
+    </script>
+    <script async defer data-website-id="08c9a9fa-4e5c-480c-9bbe-8998e906d7cb" src="https://umami.2537ly.space/umami.js"></script>
+</body>
+
+</html>
